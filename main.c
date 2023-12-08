@@ -17,7 +17,7 @@
 
 #ifndef _XOPEN_SOURCE
 #define _XOPEN_SOURCE 700
-#endif /* #ifndef$ _XOPEN_SOURCE */
+#endif /* #ifndef _XOPEN_SOURCE */
 
 #include <errno.h>      // for errno itself
 #include <signal.h>     // for kill(3), raise(3), signal(3)
@@ -38,37 +38,37 @@
 
 static volatile
 unsigned
-_fork_id = N_CHILDREN;
+fork_id = N_CHILDREN;
 
 static volatile
 sig_atomic_t
-_fatal_signum = 0;
+fatal_signum = 0;
 
 static
 void
-_log (const char *fmt, ...);
+logmsg (const char *fmt, ...);
 
 static
 void
-_on_exit (void);
+on_exit (void);
 
 static
 void
-_on_signal (int signum);
+on_signal (int signum);
 
 int
 main (void)
 {
 	// register a function to log on exit and re-raise any fatal signal we
 	// received
-	if (atexit(_on_exit) == -1) {
-		_log("atexit registration failed");
+	if (atexit(on_exit) == -1) {
+		logmsg("atexit registration failed");
 		return EXIT_FAILURE;
 	}
 
 	// register a signal handler to log and record any fatal signal we receive
 	// for later re-raising
-	if (signal(SIGINT, _on_signal) == SIG_ERR) {
+	if (signal(SIGINT, on_signal) == SIG_ERR) {
 		perror("main: signal");
 		return EXIT_FAILURE;
 	}
@@ -77,9 +77,9 @@ main (void)
 	// creating a stack of N_CHILDREN processes
 	// each waits on its child to finish. The last waits on a signal via
 	// pause()
-	_log("started");
+	logmsg("started");
 
-	while (_fork_id > 1) {
+	while (fork_id > 1) {
 		pid_t child_pid = fork();
 		if (child_pid == -1) {
 			perror("main: fork");
@@ -88,15 +88,15 @@ main (void)
 		// we are the child process
 		// keep iterating - either causing more children or breaking out
 		if (child_pid == 0) {
-			_fork_id--;
-			_log("started");
+			fork_id--;
+			logmsg("started");
 			// keep iterating until there's no more children to make
 			continue;
 		}
 
 		// we are the parent process
 		// wait for our child to finish
-		_log("waiting");
+		logmsg("waiting");
 		pid_t wait_res;
 		errno = 0;
 		while ((wait_res = waitpid(child_pid, NULL, 0)) < 0) {
@@ -110,14 +110,14 @@ main (void)
 	}
 
 	// we are the last in the stack - wait for a signal
-	_log("last child awaiting signal");
+	logmsg("last child awaiting signal");
 	pause();
 	return EXIT_SUCCESS;
 }
 
 static
 void
-_log (const char *fmt, ...)
+logmsg (const char *fmt, ...)
 {
 	if (fmt == NULL) return;
 	char *buf = NULL;
@@ -129,7 +129,7 @@ _log (const char *fmt, ...)
 	if (sys_page_size < 0) {
 		fprintf(
 			stderr,
-			"_log: sysconf: %s\n",
+			"log: sysconf: %s\n",
 			(errno ? strerror(errno) : "indeterminant page size")
 		);
 		goto cleanup;
@@ -138,7 +138,7 @@ _log (const char *fmt, ...)
 	const size_t buf_siz = (size_t) sys_page_size;
 	buf = malloc(sys_page_size * sizeof(*buf));
 	if (buf == NULL) {
-		perror("_log: malloc");
+		perror("log: malloc");
 		goto cleanup;
 	}
 	size_t buf_available = buf_siz;
@@ -149,18 +149,18 @@ _log (const char *fmt, ...)
 		buf,
 		buf_available,
 		"fork #%3u (pid %llu):\t",
-		_fork_id,
+		fork_id,
 		(long long unsigned) getpid()
 	);
 	if (written < 0) {
-		perror("_log: snprintf");
+		perror("log: snprintf");
 		goto cleanup;
 	}
 
 	// buf_siz should be large enough to fit our preamble in all cases
 	// if it was truncated, consider it a programming error
 	if ((unsigned) written > buf_available) {
-		fprintf(stderr, "_log: buffer overflow\n");
+		fprintf(stderr, "log: buffer overflow\n");
 		goto cleanup;
 	}
 	buf_available -= written;
@@ -175,7 +175,7 @@ _log (const char *fmt, ...)
 		vargs
 	);
 	if (written < 0) {
-		perror("_log: vsnprintf");
+		perror("log: vsnprintf");
 	}
 	va_end(vargs);
 	if (written < 0) {
@@ -198,7 +198,7 @@ _log (const char *fmt, ...)
 
 	// write buf to stderr
 	if (fputs(buf, stderr) == EOF) {
-		perror("_log: fputs");
+		perror("log: fputs");
 		goto cleanup;
 	}
 
@@ -209,27 +209,27 @@ cleanup:
 
 static
 void
-_on_exit (void)
+on_exit (void)
 {
-	int signum = _fatal_signum;
-	_log("exiting");
+	int signum = fatal_signum;
+	logmsg("exiting");
 
 	if (!signum) return;
 	if (signal(signum, SIG_DFL) == SIG_ERR) {
-		perror("_on_exit: signal");
+		perror("on_exit: signal");
 		_exit(EXIT_FAILURE);
 	}
 	if (raise(signum)) {
-		perror("_on_exit: kill");
+		perror("on_exit: kill");
 	}
-	_log("did not die after reraise! calling _exit(3)");
+	logmsg("did not die after reraise! calling _exit(3)");
 	_exit(EXIT_FAILURE);
 }
 
 static
 void
-_on_signal (int signum)
+on_signal (int signum)
 {
-	_fatal_signum = signum;
-	_log("caught signal");
+	fatal_signum = signum;
+	logmsg("caught signal");
 }
