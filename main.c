@@ -215,7 +215,7 @@ _on_exit (void)
 	_log("exiting");
 
 	if (!signum) return;
-	if (signal(SIGINT, SIG_DFL) == SIG_ERR) {
+	if (signal(signum, SIG_DFL) == SIG_ERR) {
 		perror("_on_exit: signal");
 		_exit(EXIT_FAILURE);
 	}
