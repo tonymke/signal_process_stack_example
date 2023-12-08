@@ -120,26 +120,29 @@ void
 logmsg (const char *fmt, ...)
 {
 	if (fmt == NULL) return;
-	char *buf = NULL;
 
 	// log messages up to _SC_PAGE_SIZE for readability (so stderr
 	// writes are more-or-less atomic)
-	errno = 0;
-	long sys_page_size = sysconf(_SC_PAGE_SIZE);
-	if (sys_page_size < 0) {
-		fprintf(
-			stderr,
-			"log: sysconf: %s\n",
-			(errno ? strerror(errno) : "indeterminant page size")
-		);
-		goto cleanup;
+	static long sys_page_size = 0;
+	if (sys_page_size <= 0) {
+		errno = 0;
+		if ((sys_page_size = sysconf(_SC_PAGE_SIZE)) < 0) {
+			fprintf(
+				stderr,
+				"log: sysconf: %s\n",
+				(errno ? strerror(errno) : "indeterminant page size")
+			);
+			return;
+		}
 	}
 
 	const size_t buf_siz = (size_t) sys_page_size;
-	buf = malloc(sys_page_size * sizeof(*buf));
+	static char *buf = NULL;
 	if (buf == NULL) {
-		perror("log: malloc");
-		goto cleanup;
+		if ((buf = malloc(sys_page_size * sizeof(*buf))) == NULL) {
+			perror("log: malloc");
+			return;
+		}
 	}
 	size_t buf_available = buf_siz;
 	int written = 0;
@@ -154,14 +157,14 @@ logmsg (const char *fmt, ...)
 	);
 	if (written < 0) {
 		perror("log: snprintf");
-		goto cleanup;
+		return;
 	}
 
 	// buf_siz should be large enough to fit our preamble in all cases
 	// if it was truncated, consider it a programming error
 	if ((unsigned) written > buf_available) {
 		fprintf(stderr, "log: buffer overflow\n");
-		goto cleanup;
+		return;
 	}
 	buf_available -= written;
 
@@ -179,7 +182,7 @@ logmsg (const char *fmt, ...)
 	}
 	va_end(vargs);
 	if (written < 0) {
-		goto cleanup;
+		return;
 	}
 
 	if ((unsigned) written <= buf_available) {
@@ -199,12 +202,8 @@ logmsg (const char *fmt, ...)
 	// write buf to stderr
 	if (fputs(buf, stderr) == EOF) {
 		perror("log: fputs");
-		goto cleanup;
+		return;
 	}
-
-cleanup:
-	free(buf);
-	return;
 }
 
 static
