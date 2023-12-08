@@ -129,7 +129,7 @@ logmsg (const char *fmt, ...)
 		if ((sys_page_size = sysconf(_SC_PAGE_SIZE)) < 0) {
 			fprintf(
 				stderr,
-				"log: sysconf: %s\n",
+				"logmsg: sysconf: %s\n",
 				(errno ? strerror(errno) : "indeterminant page size")
 			);
 			return;
@@ -140,7 +140,7 @@ logmsg (const char *fmt, ...)
 	static char *buf = NULL;
 	if (buf == NULL) {
 		if ((buf = malloc(sys_page_size * sizeof(*buf))) == NULL) {
-			perror("log: malloc");
+			perror("logmsg: malloc");
 			return;
 		}
 	}
@@ -156,14 +156,14 @@ logmsg (const char *fmt, ...)
 		(long long unsigned) getpid()
 	);
 	if (written < 0) {
-		perror("log: snprintf");
+		perror("logmsg: snprintf");
 		return;
 	}
 
 	// buf_siz should be large enough to fit our preamble in all cases
 	// if it was truncated, consider it a programming error
 	if ((unsigned) written > buf_available) {
-		fprintf(stderr, "log: buffer overflow\n");
+		fprintf(stderr, "logmsg: preamble buffer overflow\n");
 		return;
 	}
 	buf_available -= written;
@@ -172,13 +172,13 @@ logmsg (const char *fmt, ...)
 	va_list vargs;
 	va_start(vargs, fmt);
 	written = vsnprintf(
-		&buf[buf_siz-buf_available],
+		buf + buf_siz - buf_available,
 		buf_available,
 		fmt,
 		vargs
 	);
 	if (written < 0) {
-		perror("log: vsnprintf");
+		perror("logmsg: vsnprintf");
 	}
 	va_end(vargs);
 	if (written < 0) {
@@ -194,14 +194,12 @@ logmsg (const char *fmt, ...)
 
 	// write linebreak, terminator to buf (always)
 	if (buf_available < 2) buf_available = 2;
-	buf[buf_siz-buf_available] = '\n';
-	buf_available--;
-	buf[buf_siz-buf_available] = '\0';
-	buf_available--;
+	buf[buf_siz-buf_available--] = '\n';
+	buf[buf_siz-buf_available--] = '\0';
 
 	// write buf to stderr
 	if (fputs(buf, stderr) == EOF) {
-		perror("log: fputs");
+		perror("logmsg: fputs");
 		return;
 	}
 }
