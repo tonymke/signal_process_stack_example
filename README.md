@@ -1,18 +1,16 @@
 # signal\_process\_stack\_example
 
-A POSIX C program to demonstrate the differences of behavior in signal handling
-between various permutations of docker options.
+This is a POSIX C program built to demonstrate the differences in how signals
+are handled between various permutations of docker options.
 
-Recursively fork up to N\_CHILDREN times - N\_CHILDREN being a macro defaulting to
-the value `3U`. Each process waits on its child. The last child pauses, awaiting
-a signal.
+It recursive makes 3 child process - which form a stack. The top of the stack
+waits for any signal, while the rest await their child's exit.
 
 Press ^C to see how the stack unwinds in various situations.
 
 To demonstrate some additional complexities, processes will catch SIGINT, continue
 on as normal, and re-raise it once their normal logic has completed. If
 re-raising didn't term the process, it logs as such and calls `_exit(3)`.
-
 
 ## What happens when...
 
@@ -22,29 +20,31 @@ When you call `fork(2)` to make a process, the kernel creates the process
 and records the new process's ID, its parent process's ID, and the [process
 group](https://en.wikipedia.org/wiki/Process_group) ID - among other things. It
 writes these in a spot in kernel memory called the Process Table. It then hands
-the child process's ID to who called `fork(2)`.
+the child process's ID to the process that called `fork(2)`.
 
 POSIX exposes a way to both send signals to and await the termination of
 individual processes and groups of processes.
 
 #### How processes are organized
 
-Processes are grouped into "groups."
+Processes are grouped into "process groups."
 
 For example, if I run the shell command `echo foo | cat`, both `echo(1)` and
 `cat(1)` are started with the same process group ID.
 
-The shell waits on the whole process group to terminate.
+The shell waits on the whole process group to terminate - not any individual
+member of the group.
 
-#### What is expected of the person who called fork?
+#### What is expected of me when I start a child process?
 
-_They are expected to call one of the `wait(3)` series of functions._ When the
-child ends, this will remove the child's entry from the process table.
+_You are expected to call one of the `wait(3)` series of functions._ When the
+child ends, this will remove the child's entry from the process table - and the
+wait function will return.
 
-This process table entry will live in kernel memory forever - until someone
-retrieves it through the `wait(3)` series of functions. Imporantly: this table
-entry will live on even after the child process ends (this handles the case
-where the child process ended between when the parent forked and called wait).
+Process table entries live until someone retrieves it through the `wait(3)`
+series of functions. Imporantly: this table entry will live on even after the
+child process ends (this handles the case where the child process ended between
+when the parent forked and called wait).
 
 #### What happens if you don't wait for children?
 
@@ -59,7 +59,7 @@ However, this only happens when the parent also ends.
 If your program keeps running, keeps creating processes, and and never waits,
 the system process table will eventually be full. This is called PID starvation.
 
-### I run things on my machine
+### ...I run things on my machine?
 
 In a POSIX system, signals typically go to entire [process
 groups](https://en.wikipedia.org/wiki/Process_group).
@@ -71,12 +71,12 @@ Some examples:
   it
 - Logging out sends SIGHUP to all process groups you started.
 - Your init system will end your daemon by sending SIGTERM to your daemon and
-  all of its children - though it can be configured to do other things.
+  all of its children (by default).
 
 Thus, your process's children will also shut down - there is no need to forward
-signals. It is your responsibity to `wait(3)` on the process to avoid [zombie
-processes](https://en.wikipedia.org/wiki/Zombie_process), but not forward
-signals to it.
+signals. It is your responsibity, to `wait(3)` on the process to avoid leaving
+around its process table entry. It is not, however, your responsibility to
+forward signals you receive to your children.
 
 ```
 $ make clean all
@@ -104,7 +104,7 @@ Observe that:
    the signal and cleanly exit
 
 
-### Docker Run (Default)
+### ...I run things via `docker run`?
 
 The way Docker containers work change up this paradigm.
 
@@ -131,26 +131,20 @@ processes stopped.
 
 So what happened? Two things:
 
-
 First, Docker started your process in a new control group - part of the magic that
 makes containers isolated. As the first process in the control group, you are PID 1.
 PID 1 is special in Linux, because it is intended for an [init
 system](https://en.wikipedia.org/wiki/Init).
 
-PID 1 has two big tweaks to the normal rules:
+PID 1 has a big tweaks to the normal rules: **signals that normally terminate
+a process in their default state instead do nothing.**
 
-1. **Signals that normally terminate a process in their default state instead do
-   nothing.**
-1. PID 1 is responsible for calling `wait(3)` on other process whose parent
-   failed to. (Called [zombie
-   processes](https://en.wikipedia.org/wiki/Zombie_process)
+Secondly, docker sends the configured stop signal for a container (SIGTERM by
+default) to PID 1 - **and only PID 1**.
 
-Secondly, docker sends the configured stop signal for a container (SIGTERM by default) to
-PID 1 - **and only PID 1**.
+### ...I run things via `docker run` with the `--intearctive` and `--tty` flags?
 
-### Docker Run (with `--interactive` and `--tty`)
-
-If you invoke `docker run` with the `interactive` and `tty` flags, the tty being
+If you invoke `docker run` with the `--interactive` and `--tty` flags, the tty being
 attached causes signals to be forwarded to the entire process group. This is
 a little more like normal.
 
@@ -188,7 +182,7 @@ complexity for the average server process to implement.
 Fortunately, docker now ships with an opt-in init system to inject into
 containers. It's called [tini](https://github.com/krallin/tini).
 
-### Docker Run (with `--init`)
+### ...I run things via `docker run` with the `--init` flag?
 
 If you invoke `docker run` with the `--init` flag, docker will wrap your
 container's command with a simple init system.
@@ -212,16 +206,15 @@ our applications. But observe that we didn't actually stop again. This is
 because our programs won't exit until it's done waiting for its children - and
 only the first process in our stack was forwarded the signal by tini.
 
-By default, tini follow's docker's behavior: signals get forwarded to the
-process it starts, and it waits for it to finish. Anything left after it ends
-still gets SIGKILLed (because tini exited - and docker did the rest).
+By default, tini follow's docker's behavior: signals get forwarded only to the
+process it started, and then it waits for us to finish.
 
-### Docker run (with `--init` and `TINI_KILL_PROCESS_GROUP`)
+### ...I run things via `docker run` with the `--init` flag and set `TINI_KILL_PROCESS_GROUP`?
 
 Fortunately, tini exposes a configuration point that tells it to signal
 the entire process group instead of just the main process it started.
 
-This is an environment variable read by `tini`.
+This is an environment variable read by `tini`, `TINI_KILL_PROCESS_GROUP`.
 
 ```
 $ docker run --rm --init -e TINI_KILL_PROCESS_GROUP=1 -v "$PWD:/app" --user `id -u`:`id -g` --workdir /app gcc ./signal_process_stack_example
