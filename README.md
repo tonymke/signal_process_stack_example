@@ -235,6 +235,58 @@ fork #  3 (pid 7):      exiting
 And at long last, we have roughly the same behavior between docker and
 non-docker worlds - without having to modify our application code.
 
+## Additional Gotchyas
+
+### Shell Behavior
+
+Shells do not forward signals - they assume whole process groups receive
+signals.
+
+Additionally, shells do not respond to signals while a foreground command is
+being executed. Their signal handling logic is executed _between_ commands.
+This includes trapped signals.
+
+```sh
+echo foo
+# any signal caught could be handled here
+echo bar
+# any signal caught could be handled here
+```
+
+However, the one exception to this rule is the `wait` builtin - which will
+immediately return with an exit status of `128 + signal number`.
+
+Thus, if a shell script is executing a particularly long-running command, the
+shell will not react to a signal until that long-running command is done
+executing.
+
+In a normal POSIX environment where the shell and command will both be signaled,
+this isn't a big deal. The child will also receive the signal and terminate.
+
+But in most of the docker configuration permutations above - where the shell's
+child process will _not_ be signaled - this leads to a situation where the
+long-running command is not interruptible without directly signaling it.
+
+To work around this, you can start long-running commands in the background,
+forwarding the shell's terminating signal to the shell's entire process group.
+
+```sh
+#!/bin/sh
+
+forward_signal_to_pg()
+{
+	signame="${1:-TERM}"
+	trap - "$signame"
+	kill "-$signame" 0
+    wait
+}
+trap 'forward_signal_to_pg INT' INT
+trap 'forward_signal_to_pg TERM' TERM
+
+./long_running_command.sh &
+wait $!
+```
+
 ## Copying
 
 [MIT-0](https://opensource.org/license/mit-0/)
