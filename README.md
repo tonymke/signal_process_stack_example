@@ -3,7 +3,7 @@
 This is a POSIX C program built to demonstrate the differences in how signals
 are handled between various permutations of docker options.
 
-It recursive makes 3 child process - which form a stack. The top of the stack
+It recursively makes 3 child process - which form a stack. The top of the stack
 waits for any signal, while the rest await their child's exit.
 
 Press ^C to see how the stack unwinds in various situations.
